@@ -4,6 +4,8 @@ import { settleAiWin, settleAiDraw } from '../services/settlement.js';
 import { ok, fail } from '../utils/response.js';
 import db from '../db/database.js';
 import { normalizePhone } from '../utils/phone.js';
+import { verifyLaunchToken } from '../utils/launchToken.js';
+import { SYSTEM_BACKEND_URL } from '../config/env.js';
 
 export const listGames = async (req, res, next) => {
   try {
@@ -207,6 +209,7 @@ export const startBet = async (req, res, next) => {
       gameId,
       playerId,
       phone,
+      launch,
       betAmount = 0,
       mode = 'pvp',
       player2Id = null,
@@ -214,7 +217,18 @@ export const startBet = async (req, res, next) => {
 
     if (!gameId)   return fail(res, 'gameId is required',   400);
     if (!playerId) return fail(res, 'playerId is required', 400);
-    if (!phone)    return fail(res, 'phone is required',    400);
+    if (!launch)   return fail(res, 'launch token is required', 400);
+
+    let claims;
+    try {
+      claims = await verifyLaunchToken(launch, SYSTEM_BACKEND_URL);
+    } catch (err) {
+      return fail(res, 'Invalid or expired launch token', 401);
+    }
+    if (!claims?.phone) return fail(res, 'Launch token has no phone claim', 401);
+
+    const verifiedPhone = normalizePhone(claims.phone);
+    const verifiedUsername = claims.username || req.body.username || 'Player';
 
     // ── 1. Ensure player exists, then upsert game record ──────────────────────
     // Auto-create the player if they don't exist yet — prevents FK violation
@@ -227,8 +241,8 @@ export const startBet = async (req, res, next) => {
         VALUES (?, ?, ?, ?, 500)
       `).run(
         playerId,
-        req.body.username || 'Player',
-        normalizePhone(phone),
+        verifiedUsername,
+        verifiedPhone,
         tokenId,
       );
     } else if (req.apiToken?.id) {
@@ -260,14 +274,14 @@ export const startBet = async (req, res, next) => {
       : null;
     const backendUrl = tokenRow?.backend_url || null;
     const tokenStr   = tokenRow?.token       || null;
-    const normPhone  = normalizePhone(phone);
+    const normPhone  = verifiedPhone;
 
     // ── 3. Build request body — include token so backend can authenticate ────
     const requestBody = {
       action:   'deduct',
       token:    tokenStr,
       phone:    normPhone,
-      username: playerRow?.name || 'Player',
+      username: playerRow?.name || verifiedUsername,
       playerId,
       amount:   betAmount,
       gameId,

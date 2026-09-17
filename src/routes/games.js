@@ -55,7 +55,7 @@ router.post('/start-bet',
   [
     body('gameId').notEmpty().withMessage('gameId is required'),
     body('playerId').notEmpty().withMessage('playerId is required'),
-    body('phone').notEmpty().withMessage('phone is required'),
+    body('launch').notEmpty().withMessage('launch token is required'),
     body('betAmount').isInt({ min: 0 }).withMessage('betAmount must be a non-negative integer'),
     body('mode').optional().isIn(['ai', 'pvp']),
     body('player2Id').optional().isString(),
