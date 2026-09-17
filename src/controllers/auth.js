@@ -1,19 +1,12 @@
 // backend/src/controllers/auth.js
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import db from '../db/database.js';
+import { query } from '../db/database.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dama-jwt-secret-change-me';
+const JWT_SECRET  = process.env.JWT_SECRET  || 'dama-jwt-secret-change-me';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '8h';
 
-/**
- * POST /api/admin/login
- * Body: { username, password }
- *
- * Looks up the admin in the `admins` table, compares the SHA-256 hashed
- * password, and returns a signed JWT on success.
- */
-export const login = (req, res) => {
+export const login = async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -22,14 +15,16 @@ export const login = (req, res) => {
 
   const hash = crypto.createHash('sha256').update(password).digest('hex');
 
-  const admin = db
-    .prepare('SELECT id, username FROM admins WHERE username = ? AND password_hash = ?')
-    .get(username, hash);
+  const { rows } = await query(
+    `SELECT id, username FROM admins WHERE username = $1 AND password_hash = $2`,
+    [username, hash]
+  );
 
-  if (!admin) {
+  if (!rows.length) {
     return res.status(401).json({ ok: false, error: 'Invalid username or password' });
   }
 
+  const admin = rows[0];
   const token = jwt.sign(
     { id: admin.id, username: admin.username },
     JWT_SECRET,
@@ -39,14 +34,7 @@ export const login = (req, res) => {
   return res.json({ ok: true, token, username: admin.username });
 };
 
-/**
- * POST /api/admin/change-password
- * Body: { currentPassword, newPassword }
- * Requires: valid JWT (requireAdmin middleware)
- *
- * Updates the password hash in the database for the authenticated admin.
- */
-export const changePassword = (req, res) => {
+export const changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
 
   if (!currentPassword || !newPassword) {
@@ -59,16 +47,17 @@ export const changePassword = (req, res) => {
 
   const currentHash = crypto.createHash('sha256').update(currentPassword).digest('hex');
 
-  const admin = db
-    .prepare('SELECT id FROM admins WHERE id = ? AND password_hash = ?')
-    .get(req.admin.id, currentHash);
+  const { rows } = await query(
+    `SELECT id FROM admins WHERE id = $1 AND password_hash = $2`,
+    [req.admin.id, currentHash]
+  );
 
-  if (!admin) {
+  if (!rows.length) {
     return res.status(401).json({ ok: false, error: 'Current password is incorrect' });
   }
 
   const newHash = crypto.createHash('sha256').update(newPassword).digest('hex');
-  db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(newHash, admin.id);
+  await query(`UPDATE admins SET password_hash = $1 WHERE id = $2`, [newHash, rows[0].id]);
 
   return res.json({ ok: true, message: 'Password updated successfully' });
 };

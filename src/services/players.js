@@ -1,20 +1,21 @@
-import db from '../db/database.js';
+import { query } from '../db/database.js';
+
+const now = () => Math.floor(Date.now() / 1000);
 
 /**
  * Get all players with optional filters.
- * For AI players, depth and pct are joined from the ai_bots table.
- * @param {{ online?: boolean, search?: string, limit?: number, offset?: number }} filters
  */
-export const getAll = (filters = {}) => {
+export const getAll = async (filters = {}) => {
   const { online, search, limit = 50, offset = 0 } = filters;
   const conditions = [];
   const params = [];
+  let i = 1;
 
   if (online === true || online === 'true') {
     conditions.push('p.online = 1');
   }
   if (search) {
-    conditions.push('p.name LIKE ?');
+    conditions.push(`p.name ILIKE $${i++}`);
     params.push(`%${search}%`);
   }
 
@@ -22,79 +23,85 @@ export const getAll = (filters = {}) => {
   const sql = `
     SELECT
       p.*,
-      COALESCE(b.depth, 10)  AS ai_depth,
-      COALESCE(b.pct,   50)  AS ai_pct
+      COALESCE(b.depth, 10) AS ai_depth,
+      COALESCE(b.pct,   50) AS ai_pct
     FROM players p
     LEFT JOIN ai_bots b ON b.id = p.id AND p.is_ai = 1
     ${where}
     ORDER BY p.created_at DESC
-    LIMIT ? OFFSET ?
+    LIMIT $${i++} OFFSET $${i++}
   `;
   params.push(Number(limit), Number(offset));
 
-  return db.prepare(sql).all(...params);
+  const { rows } = await query(sql, params);
+  return rows;
 };
 
 /**
  * Get a single player by ID.
- * @param {string} id
  */
-export const getById = (id) => {
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+export const getById = async (id) => {
+  const { rows } = await query(`SELECT * FROM players WHERE id = $1`, [id]);
+  return rows[0] || null;
 };
 
 /**
- * Upsert a player (INSERT OR REPLACE).
- * @param {{ id: string, name: string, photo?: string, bet?: number, pieceThemeId?: string, isDemo?: boolean, isAi?: boolean, difficulty?: string, lastIp?: string, lastDevice?: string }} data
+ * Upsert a player.
  */
-export const upsert = (data) => {
-  const { id, name, photo = null, phone = null, bet = 100, pieceThemeId = 'classic', isDemo = false, isAi = false, difficulty = '', lastIp = null, lastDevice = null, tokenId = null } = data;
+export const upsert = async (data) => {
+  const {
+    id, name, photo = null, phone = null, bet = 100,
+    pieceThemeId = 'classic', isDemo = false, isAi = false,
+    difficulty = '', lastIp = null, lastDevice = null, tokenId = null,
+  } = data;
 
-  const existing = db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+  const { rows: existing } = await query(`SELECT id FROM players WHERE id = $1`, [id]);
 
-  if (existing) {
-    db.prepare(`
+  if (existing.length > 0) {
+    await query(`
       UPDATE players SET
-        name        = ?,
-        photo       = COALESCE(?, photo),
-        phone       = COALESCE(?, phone),
-        bet         = ?,
-        piece_theme = ?,
-        is_demo     = ?,
-        is_ai       = ?,
-        difficulty  = COALESCE(?, difficulty),
-        last_ip     = COALESCE(?, last_ip),
-        last_device = COALESCE(?, last_device),
-        token_id    = CASE WHEN ? IS NOT NULL THEN ? ELSE token_id END
-      WHERE id = ?
-    `).run(name, photo, phone, bet, pieceThemeId, isDemo ? 1 : 0, isAi ? 1 : 0, difficulty || null, lastIp, lastDevice, tokenId, tokenId, id);
+        name        = $1,
+        photo       = COALESCE($2, photo),
+        phone       = COALESCE($3, phone),
+        bet         = $4,
+        piece_theme = $5,
+        is_demo     = $6,
+        is_ai       = $7,
+        difficulty  = COALESCE(NULLIF($8, ''), difficulty),
+        last_ip     = COALESCE($9, last_ip),
+        last_device = COALESCE($10, last_device),
+        token_id    = CASE WHEN $11::INTEGER IS NOT NULL THEN $11 ELSE token_id END
+      WHERE id = $12
+    `, [name, photo, phone, bet, pieceThemeId, isDemo ? 1 : 0, isAi ? 1 : 0,
+        difficulty || '', lastIp, lastDevice, tokenId, id]);
   } else {
-    db.prepare(`
+    await query(`
       INSERT INTO players (id, name, photo, phone, bet, piece_theme, is_demo, is_ai, difficulty, last_ip, last_device, token_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, name, photo, phone, bet, pieceThemeId, isDemo ? 1 : 0, isAi ? 1 : 0, difficulty || '', lastIp, lastDevice, tokenId);
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    `, [id, name, photo, phone, bet, pieceThemeId, isDemo ? 1 : 0, isAi ? 1 : 0,
+        difficulty || '', lastIp, lastDevice, tokenId]);
   }
 
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+  const { rows } = await query(`SELECT * FROM players WHERE id = $1`, [id]);
+  return rows[0];
 };
 
 /**
  * Partial update of player fields (admin).
- * @param {string} id
- * @param {object} fields
  */
-export const update = (id, fields) => {
+export const update = async (id, fields) => {
   const allowed = ['name', 'wins', 'losses', 'draws', 'balance', 'bet', 'piece_theme', 'online', 'last_ip', 'last_device'];
   const columnMap = { pieceThemeId: 'piece_theme', lastIp: 'last_ip', lastDevice: 'last_device' };
 
   const setClauses = [];
   const params = [];
+  let i = 1;
 
   for (const [key, value] of Object.entries(fields)) {
-    if (value === undefined) continue;  // skip fields not provided
+    if (value === undefined) continue;
     const col = columnMap[key] || key;
     if (allowed.includes(col)) {
-      setClauses.push(`${col} = ?`);
+      setClauses.push(`${col} = $${i++}`);
       params.push(value);
     }
   }
@@ -102,100 +109,83 @@ export const update = (id, fields) => {
   if (setClauses.length === 0) return getById(id);
 
   params.push(id);
-  db.prepare(`UPDATE players SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+  await query(`UPDATE players SET ${setClauses.join(', ')} WHERE id = $${i}`, params);
+  return getById(id);
 };
 
 /**
  * Atomic balance adjustment. Floors at 0.
- * @param {string} id
- * @param {number} amount  positive = add, negative = deduct
  */
-export const adjustBalance = (id, amount) => {
-  db.prepare(`
-    UPDATE players
-    SET balance = MAX(0, balance + ?)
-    WHERE id = ?
-  `).run(amount, id);
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+export const adjustBalance = async (id, amount) => {
+  await query(`
+    UPDATE players SET balance = GREATEST(0, balance + $1) WHERE id = $2
+  `, [amount, id]);
+  return getById(id);
 };
 
 /**
  * Increment wins, losses, or draws counter.
- * @param {string} id
- * @param {'win'|'loss'|'draw'} result
  */
-export const recordResult = (id, result) => {
+export const recordResult = async (id, result) => {
   const col = result === 'win' ? 'wins' : result === 'loss' ? 'losses' : 'draws';
-  db.prepare(`UPDATE players SET ${col} = ${col} + 1 WHERE id = ?`).run(id);
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+  await query(`UPDATE players SET ${col} = ${col} + 1 WHERE id = $1`, [id]);
+  return getById(id);
 };
 
 /**
  * Delete a player by ID.
- * @param {string} id
  */
-export const deletePlayer = (id) => {
-  const info = db.prepare('DELETE FROM players WHERE id = ?').run(id);
-  return info.changes > 0;
+export const deletePlayer = async (id) => {
+  const { rowCount } = await query(`DELETE FROM players WHERE id = $1`, [id]);
+  return rowCount > 0;
 };
 
 /**
  * Set player online status and update last_seen.
- * @param {string} id
- * @param {boolean} online
  */
-export const markOnline = (id, online) => {
-  db.prepare(`
-    UPDATE players SET online = ?, last_seen = unixepoch() WHERE id = ?
-  `).run(online ? 1 : 0, id);
+export const markOnline = async (id, online) => {
+  await query(`
+    UPDATE players SET online = $1, last_seen = $2 WHERE id = $3
+  `, [online ? 1 : 0, now(), id]);
 };
 
 /**
  * Set player ready state with their chosen bet.
- * @param {string} id
- * @param {number} betAmount
  */
-export const setReady = (id, betAmount) => {
-  db.prepare(`
-    UPDATE players SET is_ready = 1, ready_bet = ?, bet = ?, last_seen = unixepoch()
-    WHERE id = ?
-  `).run(betAmount, betAmount, id);
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+export const setReady = async (id, betAmount) => {
+  await query(`
+    UPDATE players SET is_ready = 1, ready_bet = $1, bet = $1, last_seen = $2 WHERE id = $3
+  `, [betAmount, now(), id]);
+  return getById(id);
 };
 
 /**
  * Clear player ready state.
- * @param {string} id
  */
-export const clearReady = (id) => {
-  db.prepare(`UPDATE players SET is_ready = 0, ready_bet = 0 WHERE id = ?`).run(id);
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+export const clearReady = async (id) => {
+  await query(`UPDATE players SET is_ready = 0, ready_bet = 0 WHERE id = $1`, [id]);
+  return getById(id);
 };
 
 /**
  * Get all online ready players, optionally filtered by bet amount.
- * Excludes AI and demo players.
- * @param {{ bet?: number, excludeId?: string }} filters
  */
-export const getReadyPlayers = (filters = {}) => {
+export const getReadyPlayers = async (filters = {}) => {
   const { bet, excludeId } = filters;
   const conditions = ['is_ready = 1', 'online = 1', 'is_ai = 0', 'is_demo = 0'];
   const params = [];
+  let i = 1;
 
   if (bet) {
-    conditions.push('ready_bet = ?');
+    conditions.push(`ready_bet = $${i++}`);
     params.push(Number(bet));
   }
   if (excludeId) {
-    conditions.push('id != ?');
+    conditions.push(`id != $${i++}`);
     params.push(excludeId);
   }
 
-  const sql = `
-    SELECT * FROM players
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY last_seen DESC
-  `;
-  return db.prepare(sql).all(...params);
+  const sql = `SELECT * FROM players WHERE ${conditions.join(' AND ')} ORDER BY last_seen DESC`;
+  const { rows } = await query(sql, params);
+  return rows;
 };

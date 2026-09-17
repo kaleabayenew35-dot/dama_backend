@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import db from '../db/database.js';
+import { query } from '../db/database.js';
 import * as playersService from '../services/players.js';
 import { getAllOwnerBalances } from '../services/settlement.js';
 import { ok, fail } from '../utils/response.js';
@@ -14,13 +14,27 @@ const ETHIOPIAN_NAMES = [
 
 export const getStats = async (req, res, next) => {
   try {
-    const totalPlayers  = db.prepare('SELECT COUNT(*) as cnt FROM players').get().cnt;
-    const onlinePlayers = db.prepare('SELECT COUNT(*) as cnt FROM players WHERE online = 1').get().cnt;
-    const totalGames    = db.prepare('SELECT COUNT(*) as cnt FROM games').get().cnt;
-    const activeGames   = db.prepare("SELECT COUNT(*) as cnt FROM games WHERE status = 'active'").get().cnt;
-    const totalETB      = db.prepare('SELECT COALESCE(SUM(balance), 0) as total FROM players').get().total;
+    const [
+      { rows: [{ cnt: totalPlayers  }] },
+      { rows: [{ cnt: onlinePlayers }] },
+      { rows: [{ cnt: totalGames    }] },
+      { rows: [{ cnt: activeGames   }] },
+      { rows: [{ total: totalETB    }] },
+    ] = await Promise.all([
+      query(`SELECT COUNT(*) AS cnt FROM players`),
+      query(`SELECT COUNT(*) AS cnt FROM players WHERE online = 1`),
+      query(`SELECT COUNT(*) AS cnt FROM games`),
+      query(`SELECT COUNT(*) AS cnt FROM games WHERE status = 'active'`),
+      query(`SELECT COALESCE(SUM(balance), 0) AS total FROM players`),
+    ]);
 
-    ok(res, { totalPlayers, onlinePlayers, totalGames, activeGames, totalETB });
+    ok(res, {
+      totalPlayers:  parseInt(totalPlayers,  10),
+      onlinePlayers: parseInt(onlinePlayers, 10),
+      totalGames:    parseInt(totalGames,    10),
+      activeGames:   parseInt(activeGames,   10),
+      totalETB:      parseInt(totalETB,      10),
+    });
   } catch (err) {
     next(err);
   }
@@ -28,8 +42,8 @@ export const getStats = async (req, res, next) => {
 
 export const listAllPlayers = async (req, res, next) => {
   try {
-    const players = db.prepare('SELECT * FROM players ORDER BY created_at DESC').all();
-    ok(res, players);
+    const { rows } = await query(`SELECT * FROM players ORDER BY created_at DESC`);
+    ok(res, rows);
   } catch (err) {
     next(err);
   }
@@ -37,8 +51,8 @@ export const listAllPlayers = async (req, res, next) => {
 
 export const deleteDemoPlayers = async (req, res, next) => {
   try {
-    const info = db.prepare("DELETE FROM players WHERE id LIKE 'demo_%'").run();
-    ok(res, { deleted: info.changes });
+    const { rowCount } = await query(`DELETE FROM players WHERE id LIKE 'demo_%'`);
+    ok(res, { deleted: rowCount });
   } catch (err) {
     next(err);
   }
@@ -49,7 +63,7 @@ export const seedDemoPlayers = async (req, res, next) => {
     const seeded = [];
     for (const name of ETHIOPIAN_NAMES) {
       const id = `demo_${nanoid()}`;
-      playersService.upsert({ id, name, isDemo: true });
+      await playersService.upsert({ id, name, isDemo: true });
       seeded.push(id);
     }
     ok(res, { seeded: seeded.length, ids: seeded }, 201);
@@ -60,7 +74,7 @@ export const seedDemoPlayers = async (req, res, next) => {
 
 export const getOwnerBalances = async (req, res, next) => {
   try {
-    const balances = getAllOwnerBalances();
+    const balances = await getAllOwnerBalances();
     ok(res, balances);
   } catch (err) { next(err); }
 };
@@ -68,7 +82,7 @@ export const getOwnerBalances = async (req, res, next) => {
 export const getConnectionsStatus = async (req, res, next) => {
   try {
     const gameBackend = { status: 'online', url: `${req.protocol}://${req.get('host')}` };
-    const tokens = db.prepare('SELECT id, owner, backend_url, is_active FROM api_tokens').all();
+    const { rows: tokens } = await query(`SELECT id, owner, backend_url, is_active, token FROM api_tokens`);
     const tokenBackends = [];
 
     for (const t of tokens) {
@@ -85,20 +99,12 @@ export const getConnectionsStatus = async (req, res, next) => {
           signal: AbortSignal.timeout(2000),
         });
         tokenBackends.push({
-          id: t.id,
-          owner: t.owner,
-          url: t.backend_url,
+          id: t.id, owner: t.owner, url: t.backend_url,
           status: pingRes.ok ? 'online' : 'error',
-          statusCode: pingRes.status
+          statusCode: pingRes.status,
         });
       } catch (err) {
-        tokenBackends.push({
-          id: t.id,
-          owner: t.owner,
-          url: t.backend_url,
-          status: 'offline',
-          error: err.message
-        });
+        tokenBackends.push({ id: t.id, owner: t.owner, url: t.backend_url, status: 'offline', error: err.message });
       }
     }
 
@@ -110,23 +116,21 @@ export const getConnectionsStatus = async (req, res, next) => {
 
 export const getItemStats = async (req, res, next) => {
   try {
-    // Count purchases per item_id from owned_items table
-    const rows = db.prepare(`
+    const { rows } = await query(`
       SELECT
-        item_id,
+        oi.item_id,
         COUNT(*) AS purchase_count,
-        GROUP_CONCAT(p.name, ', ') AS buyers
+        STRING_AGG(p.name, ', ') AS buyers
       FROM owned_items oi
       JOIN players p ON p.id = oi.player_id
       GROUP BY oi.item_id
       ORDER BY purchase_count DESC
-    `).all();
+    `);
 
-    // Build a map: item_id → { purchase_count, buyers[] }
     const statsMap = {};
     for (const row of rows) {
       statsMap[row.item_id] = {
-        purchase_count: row.purchase_count,
+        purchase_count: parseInt(row.purchase_count, 10),
         buyers: row.buyers ? row.buyers.split(', ') : [],
       };
     }
@@ -137,7 +141,7 @@ export const getItemStats = async (req, res, next) => {
 
 export const getTokenUsers = async (req, res, next) => {
   try {
-    const tokens = db.prepare(`
+    const { rows: tokens } = await query(`
       SELECT
         t.id,
         t.key_name,
@@ -146,29 +150,29 @@ export const getTokenUsers = async (req, res, next) => {
         t.is_active,
         t.created_at,
         t.last_used,
-        COUNT(p.id)                 AS player_count,
-        COALESCE(SUM(p.balance), 0) AS total_balance,
+        COUNT(p.id)                          AS player_count,
+        COALESCE(SUM(p.balance), 0)          AS total_balance,
         SUM(CASE WHEN p.online = 1 THEN 1 ELSE 0 END) AS online_count,
-        SUM(p.wins)                 AS total_wins,
-        SUM(p.losses)               AS total_losses,
-        COALESCE(ob.balance, 0)     AS owner_balance,
-        COALESCE(ob.total_earned, 0) AS owner_total_earned
+        COALESCE(SUM(p.wins), 0)             AS total_wins,
+        COALESCE(SUM(p.losses), 0)           AS total_losses,
+        COALESCE(ob.balance, 0)              AS owner_balance,
+        COALESCE(ob.total_earned, 0)         AS owner_total_earned
       FROM api_tokens t
       LEFT JOIN players p  ON p.token_id = t.id AND p.is_ai = 0 AND p.is_demo = 0
       LEFT JOIN token_owner_balances ob ON ob.token_id = t.id
-      GROUP BY t.id
+      GROUP BY t.id, ob.balance, ob.total_earned
       ORDER BY t.created_at DESC
-    `).all();
+    `);
 
-    const result = tokens.map(tok => {
-      const players = db.prepare(`
+    const result = await Promise.all(tokens.map(async (tok) => {
+      const { rows: players } = await query(`
         SELECT id, name, phone, balance, wins, losses, draws, online, last_seen, bet, piece_theme
         FROM players
-        WHERE token_id = ? AND is_ai = 0 AND is_demo = 0
+        WHERE token_id = $1 AND is_ai = 0 AND is_demo = 0
         ORDER BY balance DESC
-      `).all(tok.id);
+      `, [tok.id]);
       return { ...tok, players };
-    });
+    }));
 
     ok(res, result);
   } catch (err) { next(err); }
@@ -176,18 +180,16 @@ export const getTokenUsers = async (req, res, next) => {
 
 export const adminAdjustBalance = async (req, res, next) => {
   try {
-    const existing = playersService.getById(req.params.id);
+    const existing = await playersService.getById(req.params.id);
     if (!existing) return fail(res, 'Player not found', 404);
 
     const { amount, balance } = req.body;
 
     let player;
     if (typeof balance === 'number') {
-      // Set exact balance
-      player = playersService.update(req.params.id, { balance: Math.max(0, balance) });
+      player = await playersService.update(req.params.id, { balance: Math.max(0, balance) });
     } else if (typeof amount === 'number') {
-      // Adjust relative
-      player = playersService.adjustBalance(req.params.id, amount);
+      player = await playersService.adjustBalance(req.params.id, amount);
     } else {
       return fail(res, 'Provide either amount or balance', 400);
     }
@@ -203,14 +205,16 @@ export const getOwnerTransactions = async (req, res, next) => {
     const { from, to, token_id } = req.query;
     const conditions = [];
     const params = [];
+    let i = 1;
 
-    if (token_id) { conditions.push('tot.token_id = ?'); params.push(Number(token_id)); }
-    if (from)     { conditions.push('tot.created_at >= ?'); params.push(Math.floor(new Date(from).getTime() / 1000)); }
-    if (to)       { conditions.push('tot.created_at <= ?'); params.push(Math.floor(new Date(to).getTime() / 1000) + 86399); }
+    if (token_id) { conditions.push(`tot.token_id = $${i++}`); params.push(Number(token_id)); }
+    if (from)     { conditions.push(`tot.created_at >= $${i++}`); params.push(Math.floor(new Date(from).getTime() / 1000)); }
+    if (to)       { conditions.push(`tot.created_at <= $${i++}`); params.push(Math.floor(new Date(to).getTime() / 1000) + 86399); }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    params.push(500);
 
-    const rows = db.prepare(`
+    const { rows } = await query(`
       SELECT tot.id, tot.token_id, tot.game_id, tot.type, tot.amount,
              tot.running_balance, tot.note, tot.created_at,
              t.owner, t.key_name
@@ -218,52 +222,34 @@ export const getOwnerTransactions = async (req, res, next) => {
       JOIN api_tokens t ON t.id = tot.token_id
       ${where}
       ORDER BY tot.created_at DESC, tot.id DESC
-      LIMIT 500
-    `).all(...params);
+      LIMIT $${i}
+    `, params);
 
     ok(res, rows);
   } catch (err) { next(err); }
 };
 
-/**
- * GET /api/admin/pending-callbacks
- * Query params (all optional):
- *   status   — 'pending' | 'failed' | 'delivered'  (default: pending + failed)
- *   token_id — filter by token
- *   game_id  — filter by game
- *   limit    — default 200
- *
- * Returns outbox rows so an operator can see what never delivered.
- */
 export const getPendingCallbacks = async (req, res, next) => {
   try {
     const { status, token_id, game_id, limit = 200 } = req.query;
     const conditions = [];
-    const params     = [];
+    const params = [];
+    let i = 1;
 
     if (status) {
-      conditions.push('poc.status = ?');
+      conditions.push(`poc.status = $${i++}`);
       params.push(status);
     } else {
-      // Default: show everything that isn't cleanly delivered
-      conditions.push("poc.status IN ('pending','failed')");
+      conditions.push(`poc.status IN ('pending','failed')`);
     }
 
-    if (token_id) {
-      conditions.push('poc.token_id = ?');
-      params.push(Number(token_id));
-    }
-
-    if (game_id) {
-      conditions.push('poc.game_id = ?');
-      params.push(game_id);
-    }
+    if (token_id) { conditions.push(`poc.token_id = $${i++}`); params.push(Number(token_id)); }
+    if (game_id)  { conditions.push(`poc.game_id = $${i++}`);  params.push(game_id); }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-
     params.push(Math.min(Number(limit), 500));
 
-    const rows = db.prepare(`
+    const { rows } = await query(`
       SELECT
         poc.id, poc.token_id, poc.game_id, poc.action,
         poc.payload_json, poc.attempts, poc.last_error,
@@ -273,10 +259,9 @@ export const getPendingCallbacks = async (req, res, next) => {
       LEFT JOIN api_tokens t ON t.id = poc.token_id
       ${where}
       ORDER BY poc.created_at DESC, poc.id DESC
-      LIMIT ?
-    `).all(...params);
+      LIMIT $${i}
+    `, params);
 
-    // Parse payload_json for readability — keep raw string as fallback
     const data = rows.map(row => {
       let payload = row.payload_json;
       try { payload = JSON.parse(row.payload_json); } catch { /* keep raw */ }

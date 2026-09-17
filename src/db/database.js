@@ -1,22 +1,70 @@
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { DB_PATH } from '../config/env.js';
+import pg from 'pg';
+import { DATABASE_URL } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
-// Ensure the data directory exists
-const dbDir = path.dirname(path.resolve(DB_PATH));
-fs.mkdirSync(dbDir, { recursive: true });
+const { Pool } = pg;
 
-const db = new Database(path.resolve(DB_PATH));
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
 
-// Performance and integrity pragmas
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+pool.on('connect', () => {
+  logger.info('PostgreSQL connected');
+});
 
-// Checkpoint on startup — flushes WAL into main .db so it's always readable by external viewers
-db.pragma('wal_checkpoint(TRUNCATE)');
+pool.on('error', (err) => {
+  logger.error('PostgreSQL pool error:', err.message);
+});
 
-logger.info(`SQLite connected: ${path.resolve(DB_PATH)}`);
+/**
+ * Run a single query.
+ * @param {string} text  SQL with $1, $2 … placeholders
+ * @param {any[]}  [params]
+ * @returns {Promise<pg.QueryResult>}
+ */
+export async function query(text, params) {
+  const start = Date.now();
+  try {
+    const res = await pool.query(text, params);
+    const duration = Date.now() - start;
+    logger.debug(`query [${duration}ms]: ${text.slice(0, 80)}`);
+    return res;
+  } catch (err) {
+    logger.error(`query error: ${err.message}\n  SQL: ${text}`);
+    throw err;
+  }
+}
 
-export default db;
+/**
+ * Get a dedicated client for transactions.
+ * Caller MUST call client.release() when done.
+ */
+export async function getClient() {
+  return pool.connect();
+}
+
+/**
+ * Run multiple statements inside a single transaction.
+ * @param {(client: pg.PoolClient) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export default pool;

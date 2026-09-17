@@ -1,85 +1,49 @@
-import db from './database.js';
+import { query } from './database.js';
 import { applySchema } from './schema.js';
-import { ensureOwnerBalanceTable } from '../services/settlement.js';
 import { logger } from '../utils/logger.js';
 import crypto from 'crypto';
 
-export function ensureDefaultApiToken(targetDb = db) {
-  const existing = targetDb.prepare('SELECT id FROM api_tokens WHERE token = ?').get('dama_shared_frontend');
-  if (existing) return null;
+export async function ensureDefaultApiToken() {
+  const { rows } = await query(`SELECT id FROM api_tokens WHERE token = $1`, ['dama_shared_frontend']);
+  if (rows.length > 0) return null;
 
   const token = 'dama_' + crypto.randomBytes(24).toString('hex');
-  targetDb.prepare(`
-    INSERT INTO api_tokens (token, key_name, owner, is_active)
-    VALUES (?, ?, ?, 1)
-  `).run(token, 'shared-frontend', 'Admin');
+  await query(
+    `INSERT INTO api_tokens (token, key_name, owner, is_active) VALUES ($1, $2, $3, 1)`,
+    [token, 'shared-frontend', 'Admin']
+  );
   return token;
 }
 
-export const runMigrations = () => {
+export const runMigrations = async () => {
   logger.info('Running database migrations...');
-  applySchema();
-  ensureOwnerBalanceTable();
+  await applySchema();
 
-  // ── Ensure game_bet_log table exists (may be missing on older DBs) ────────
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS game_bet_log (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      game_id        TEXT    NOT NULL,
-      player_id      TEXT    NOT NULL,
-      phone          TEXT,
-      bet_amount     INTEGER NOT NULL DEFAULT 0,
-      backend_url    TEXT,
-      request_body   TEXT,
-      response_body  TEXT,
-      status         TEXT    NOT NULL DEFAULT 'pending',
-      error          TEXT,
-      created_at     INTEGER NOT NULL DEFAULT (unixepoch())
-    )
+  // Ensure running_balance column exists on token_owner_transactions
+  await query(`
+    ALTER TABLE token_owner_transactions ADD COLUMN IF NOT EXISTS running_balance INTEGER
   `);
 
-  // ── Ensure pending_owner_callbacks table exists (older DBs may not have it) ─
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS pending_owner_callbacks (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      token_id     INTEGER NOT NULL,
-      game_id      TEXT,
-      action       TEXT    NOT NULL,
-      payload_json TEXT    NOT NULL,
-      attempts     INTEGER NOT NULL DEFAULT 0,
-      last_error   TEXT,
-      status       TEXT    NOT NULL DEFAULT 'pending',
-      created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-      FOREIGN KEY (token_id) REFERENCES api_tokens(id)
-    )
-  `);
-
-  // ── Ensure a default API token exists for the frontend on fresh deployments ─
-  const seededToken = ensureDefaultApiToken();
+  // Seed a default API token on fresh deployments
+  const seededToken = await ensureDefaultApiToken();
   if (seededToken) {
     logger.info(`Seeded default API token: ${seededToken}`);
   }
 
-  // ── Add running_balance column to token_owner_transactions (idempotent) ───
-  // This stores the cumulative owner balance AFTER each transaction — makes
-  // the transaction log self-contained for display purposes.
+  // Backfill token_id for real players whose phone is set but token_id is null
   try {
-    db.prepare('ALTER TABLE token_owner_transactions ADD COLUMN running_balance INTEGER').run();
-    logger.info('Migration: added running_balance column to token_owner_transactions');
-  } catch { /* already exists */ }
-
-  // ── Backfill token_id for real players whose phone is set but token_id is null
-  try {
-    const firstToken = db.prepare(
-      'SELECT id FROM api_tokens WHERE is_active = 1 ORDER BY id ASC LIMIT 1'
-    ).get();
-    if (firstToken) {
-      const changes = db.prepare(
-        'UPDATE players SET token_id = ? WHERE token_id IS NULL AND phone IS NOT NULL AND is_ai = 0 AND is_demo = 0'
-      ).run(firstToken.id).changes;
-      if (changes > 0) {
-        logger.info(`Backfilled token_id=${firstToken.id} for ${changes} player(s).`);
+    const { rows: tokenRows } = await query(
+      `SELECT id FROM api_tokens WHERE is_active = 1 ORDER BY id ASC LIMIT 1`
+    );
+    if (tokenRows.length > 0) {
+      const firstTokenId = tokenRows[0].id;
+      const { rowCount } = await query(
+        `UPDATE players SET token_id = $1
+         WHERE token_id IS NULL AND phone IS NOT NULL AND is_ai = 0 AND is_demo = 0`,
+        [firstTokenId]
+      );
+      if (rowCount > 0) {
+        logger.info(`Backfilled token_id=${firstTokenId} for ${rowCount} player(s).`);
       }
     }
   } catch (err) {

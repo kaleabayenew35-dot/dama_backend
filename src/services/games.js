@@ -1,44 +1,45 @@
 import { nanoid } from 'nanoid';
-import db from '../db/database.js';
+import { query } from '../db/database.js';
+
+const now = () => Math.floor(Date.now() / 1000);
 
 /**
  * Create a new game.
- * @param {{ mode: string, player1Id: string, player2Id?: string, betAmount?: number }} data
  */
-export const create = (data) => {
+export const create = async (data) => {
   const { mode, player1Id, player2Id = null, betAmount = 0 } = data;
   const id = nanoid();
 
-  db.prepare(`
+  await query(`
     INSERT INTO games (id, mode, player1_id, player2_id, bet_amount)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, mode, player1Id, player2Id, betAmount);
+    VALUES ($1, $2, $3, $4, $5)
+  `, [id, mode, player1Id, player2Id, betAmount]);
 
-  return db.prepare('SELECT * FROM games WHERE id = ?').get(id);
+  const { rows } = await query(`SELECT * FROM games WHERE id = $1`, [id]);
+  return rows[0];
 };
 
 /**
  * Get all games with optional filters.
- * Resolves player names from both the players table and ai_bots table.
- * @param {{ status?: string, playerId?: string, limit?: number, offset?: number }} filters
  */
-export const getAll = (filters = {}) => {
+export const getAll = async (filters = {}) => {
   const { status, playerId, limit = 20, offset = 0 } = filters;
   const conditions = [];
   const params = [];
+  let i = 1;
 
   if (status) {
-    conditions.push('g.status = ?');
+    conditions.push(`g.status = $${i++}`);
     params.push(status);
   }
   if (playerId) {
-    conditions.push('(g.player1_id = ? OR g.player2_id = ?)');
-    params.push(playerId, playerId);
+    conditions.push(`(g.player1_id = $${i} OR g.player2_id = $${i})`);
+    params.push(playerId);
+    i++;
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  // Resolve names from players first, then fall back to ai_bots
   const sql = `
     SELECT
       g.*,
@@ -54,61 +55,62 @@ export const getAll = (filters = {}) => {
     LEFT JOIN ai_bots bw ON bw.id = g.winner_id
     ${where}
     ORDER BY g.created_at DESC
-    LIMIT ? OFFSET ?
+    LIMIT $${i++} OFFSET $${i++}
   `;
   params.push(Number(limit), Number(offset));
 
-  return db.prepare(sql).all(...params);
+  const { rows } = await query(sql, params);
+  return rows;
 };
 
 /**
  * Get a single game by ID, including its moves.
- * @param {string} id
  */
-export const getById = (id) => {
-  const game = db.prepare('SELECT * FROM games WHERE id = ?').get(id);
-  if (!game) return null;
+export const getById = async (id) => {
+  const { rows: gameRows } = await query(`SELECT * FROM games WHERE id = $1`, [id]);
+  if (!gameRows.length) return null;
 
-  const moves = db.prepare('SELECT * FROM game_moves WHERE game_id = ? ORDER BY move_num ASC').all(id);
-  return { ...game, moves };
+  const { rows: moves } = await query(
+    `SELECT * FROM game_moves WHERE game_id = $1 ORDER BY move_num ASC`, [id]
+  );
+  return { ...gameRows[0], moves };
 };
 
 /**
  * Finish a game — set winner, status, duration, move count.
- * @param {string} id
- * @param {{ winnerId?: string, durationSec: number, moveCount: number }} data
  */
-export const finish = (id, data) => {
+export const finish = async (id, data) => {
   const { winnerId = null, durationSec, moveCount } = data;
 
-  db.prepare(`
+  await query(`
     UPDATE games SET
-      winner_id    = ?,
+      winner_id    = $1,
       status       = 'finished',
-      duration_sec = ?,
-      move_count   = ?,
-      finished_at  = unixepoch()
-    WHERE id = ?
-  `).run(winnerId, durationSec, moveCount, id);
+      duration_sec = $2,
+      move_count   = $3,
+      finished_at  = $4
+    WHERE id = $5
+  `, [winnerId, durationSec, moveCount, now(), id]);
 
   return getById(id);
 };
 
 /**
  * Append a move to a game.
- * @param {string} gameId
- * @param {string} playerId
- * @param {{ from: object, to: object, captured?: object }} moveData
  */
-export const addMove = (gameId, playerId, moveData) => {
-  // Determine next move number
-  const row = db.prepare('SELECT COUNT(*) as cnt FROM game_moves WHERE game_id = ?').get(gameId);
-  const moveNum = (row?.cnt || 0) + 1;
+export const addMove = async (gameId, playerId, moveData) => {
+  const { rows: countRows } = await query(
+    `SELECT COUNT(*) AS cnt FROM game_moves WHERE game_id = $1`, [gameId]
+  );
+  const moveNum = (parseInt(countRows[0].cnt, 10) || 0) + 1;
 
-  db.prepare(`
+  await query(`
     INSERT INTO game_moves (game_id, player_id, move_data, move_num)
-    VALUES (?, ?, ?, ?)
-  `).run(gameId, playerId, JSON.stringify(moveData), moveNum);
+    VALUES ($1, $2, $3, $4)
+  `, [gameId, playerId, JSON.stringify(moveData), moveNum]);
 
-  return db.prepare('SELECT * FROM game_moves WHERE game_id = ? ORDER BY move_num DESC LIMIT 1').get(gameId);
+  const { rows } = await query(
+    `SELECT * FROM game_moves WHERE game_id = $1 ORDER BY move_num DESC LIMIT 1`, [gameId]
+  );
+  return rows[0];
 };

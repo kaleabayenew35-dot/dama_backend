@@ -2,73 +2,57 @@ import * as gamesService from '../services/games.js';
 import * as playersService from '../services/players.js';
 import { settleAiWin, settleAiDraw } from '../services/settlement.js';
 import { ok, fail } from '../utils/response.js';
-import db from '../db/database.js';
+import { query } from '../db/database.js';
 import { normalizePhone } from '../utils/phone.js';
 import { verifyLaunchToken } from '../utils/launchToken.js';
 import { SYSTEM_BACKEND_URL } from '../config/env.js';
 
+const now = () => Math.floor(Date.now() / 1000);
+
 export const listGames = async (req, res, next) => {
   try {
     const { status, playerId, limit, offset } = req.query;
-    const games = gamesService.getAll({ status, playerId, limit, offset });
+    const games = await gamesService.getAll({ status, playerId, limit, offset });
     ok(res, games);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
 export const getGame = async (req, res, next) => {
   try {
-    const game = gamesService.getById(req.params.id);
+    const game = await gamesService.getById(req.params.id);
     if (!game) return fail(res, 'Game not found', 404);
     ok(res, game);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
 export const createGame = async (req, res, next) => {
   try {
     const { mode, player1Id, player2Id, betAmount } = req.body;
-    const game = gamesService.create({ mode, player1Id, player2Id, betAmount });
+    const game = await gamesService.create({ mode, player1Id, player2Id, betAmount });
     ok(res, game, 201);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
 export const finishGame = async (req, res, next) => {
   try {
-    const existing = gamesService.getById(req.params.id);
+    const existing = await gamesService.getById(req.params.id);
     if (!existing) return fail(res, 'Game not found', 404);
     const { winnerId, durationSec, moveCount } = req.body;
-    const game = gamesService.finish(req.params.id, { winnerId, durationSec, moveCount });
+    const game = await gamesService.finish(req.params.id, { winnerId, durationSec, moveCount });
     ok(res, game);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
 export const addMove = async (req, res, next) => {
   try {
-    const existing = gamesService.getById(req.params.id);
+    const existing = await gamesService.getById(req.params.id);
     if (!existing) return fail(res, 'Game not found', 404);
     const { playerId, moveData } = req.body;
-    const move = gamesService.addMove(req.params.id, playerId, moveData);
+    const move = await gamesService.addMove(req.params.id, playerId, moveData);
     ok(res, move, 201);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-/**
- * POST /api/games/finish-local
- * Records a completed AI or local (no-bet) game.
- * Body: { mode, player1Id, player2Id?, winnerId?, result, durationSec, moveCount }
- *   result: 'win' | 'loss' | 'draw'  (from player1's perspective)
- *
- * NOTE: For AI games WITH a real bet, use POST /api/games/finish-ai-bet instead.
- */
 export const finishLocal = async (req, res, next) => {
   try {
     const { mode, player1Id, player2Id, winnerId, result, durationSec = 0, moveCount = 0 } = req.body;
@@ -76,66 +60,29 @@ export const finishLocal = async (req, res, next) => {
     if (!player1Id || !result) return fail(res, 'player1Id and result required', 400);
     if (!['win','loss','draw'].includes(result)) return fail(res, 'result must be win, loss, or draw', 400);
 
-    // Create the game record (always betAmount=0 for finish-local)
-    const game = gamesService.create({ mode: mode || 'ai', player1Id, player2Id: player2Id || null, betAmount: 0 });
-    gamesService.finish(game.id, { winnerId: winnerId || null, durationSec, moveCount });
+    const game = await gamesService.create({ mode: mode || 'ai', player1Id, player2Id: player2Id || null, betAmount: 0 });
+    await gamesService.finish(game.id, { winnerId: winnerId || null, durationSec, moveCount });
 
-    // Record result for player1
-    playersService.recordResult(player1Id, result);
+    await playersService.recordResult(player1Id, result);
 
-    // Record inverse result for player2 only if they are a real DB player
     if (player2Id) {
-      const p2 = playersService.getById(player2Id);
+      const p2 = await playersService.getById(player2Id);
       if (p2) {
         const p2Result = result === 'win' ? 'loss' : result === 'loss' ? 'win' : 'draw';
-        playersService.recordResult(player2Id, p2Result);
+        await playersService.recordResult(player2Id, p2Result);
       }
     }
 
-    const finished = gamesService.getById(game.id);
+    const finished = await gamesService.getById(game.id);
     ok(res, finished, 201);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-/**
- * POST /api/games/finish-ai-bet
- *
- * Records a completed AI game that had a real bet, runs full financial settlement,
- * updates the token owner balance, and sends callbacks to the token backend.
- *
- * Body:
- * {
- *   gameId:      string,   // the game ID created by start-bet
- *   humanId:     string,   // the real player's ID
- *   aiId:        string,   // the AI bot's player ID
- *   result:      'win' | 'loss' | 'draw',  // from the HUMAN player's perspective
- *   durationSec: number,   // optional
- *   moveCount:   number,   // optional
- * }
- *
- * Settlement logic:
- *   win  (human wins) → human credited pot−10%, owner balance −(bet−fee)
- *   loss (AI wins)    → human gets nothing,    owner balance +bet +fee
- *   draw              → human refunded bet−5%, owner balance +totalFee
- *
- * Response: { game, settlement }
- *   settlement.winnerPayout  — amount added to human's balance (0 on loss)
- *   settlement.fee           — 10%/5% commission
- *   settlement.refund        — refund on draw
- *   settlement.ownerDelta    — net change to owner balance (can be negative)
- */
 export const finishAiBet = async (req, res, next) => {
   try {
     const {
-      gameId,
-      humanId,
-      aiId,
-      result,
-      betAmount,        // optional — patch game row if bet_amount is 0
-      durationSec = 0,
-      moveCount   = 0,
+      gameId, humanId, aiId, result,
+      betAmount, durationSec = 0, moveCount = 0,
     } = req.body;
 
     if (!gameId)  return fail(res, 'gameId is required',  400);
@@ -145,39 +92,43 @@ export const finishAiBet = async (req, res, next) => {
       return fail(res, 'result must be win, loss, or draw', 400);
     }
 
-    // Load game
-    let game = db.prepare('SELECT * FROM games WHERE id = ?').get(gameId);
-    if (!game) return fail(res, `Game ${gameId} not found. Call start-bet first.`, 404);
+    let { rows: gameRows } = await query(`SELECT * FROM games WHERE id = $1`, [gameId]);
+    if (!gameRows.length) return fail(res, `Game ${gameId} not found. Call start-bet first.`, 404);
+    let game = gameRows[0];
     if (game.status === 'finished') return fail(res, 'Game already finished', 409);
 
-    // Patch bet_amount if the game row has 0 but client sent a betAmount
     if (betAmount > 0 && (game.bet_amount === 0 || game.bet_amount === null)) {
-      db.prepare('UPDATE games SET bet_amount = ?, player2_id = COALESCE(player2_id, ?) WHERE id = ?')
-        .run(betAmount, aiId, gameId);
-      game = db.prepare('SELECT * FROM games WHERE id = ?').get(gameId);
+      await query(
+        `UPDATE games SET bet_amount = $1, player2_id = COALESCE(player2_id, $2) WHERE id = $3`,
+        [betAmount, aiId, gameId]
+      );
+      const { rows: refreshed } = await query(`SELECT * FROM games WHERE id = $1`, [gameId]);
+      game = refreshed[0];
     }
 
-    // Ensure player has token_id linked (patch if missing and token in request)
     if (req.apiToken?.id) {
-      db.prepare('UPDATE players SET token_id = ? WHERE id = ? AND token_id IS NULL')
-        .run(req.apiToken.id, humanId);
+      await query(
+        `UPDATE players SET token_id = $1 WHERE id = $2 AND token_id IS NULL`,
+        [req.apiToken.id, humanId]
+      );
     }
 
     const winnerId = result === 'win' ? humanId : result === 'loss' ? aiId : null;
-    gamesService.finish(gameId, { winnerId, durationSec, moveCount });
+    await gamesService.finish(gameId, { winnerId, durationSec, moveCount });
 
-    const freshGame = db.prepare('SELECT * FROM games WHERE id = ?').get(gameId);
+    const { rows: freshRows } = await query(`SELECT * FROM games WHERE id = $1`, [gameId]);
+    const freshGame = freshRows[0];
 
     let settlement = {};
     if (result === 'draw') {
-      settlement = settleAiDraw(humanId, freshGame);
+      settlement = await settleAiDraw(humanId, freshGame);
     } else {
-      settlement = settleAiWin(winnerId, result === 'win' ? aiId : humanId, freshGame);
+      settlement = await settleAiWin(winnerId, result === 'win' ? aiId : humanId, freshGame);
     }
 
-    const updatedPlayer = playersService.getById(humanId);
+    const updatedPlayer = await playersService.getById(humanId);
     ok(res, {
-      game:       gamesService.getById(gameId),
+      game:       await gamesService.getById(gameId),
       player:     updatedPlayer,
       settlement: {
         result,
@@ -187,32 +138,14 @@ export const finishAiBet = async (req, res, next) => {
         ownerDelta:   settlement.ownerDelta   ?? 0,
       },
     }, 200);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-/**
- * POST /api/games/start-bet
- * Body: { gameId, playerId, phone, betAmount, mode, player2Id? }
- *
- * Steps:
- *  1. Upsert the game row in `games` (using the client-supplied gameId)
- *  2. Resolve the player's token row → backend_url
- *  3. POST {backend_url}/dama with action:'deduct'
- *  4. Write a row to game_bet_log (request + response + status)
- *  5. Return { game, betLog } to the frontend so it can display the audit trail
- */
 export const startBet = async (req, res, next) => {
   try {
     const {
-      gameId,
-      playerId,
-      phone,
-      launch,
-      betAmount = 0,
-      mode = 'pvp',
-      player2Id = null,
+      gameId, playerId, phone, launch,
+      betAmount = 0, mode = 'pvp', player2Id = null,
     } = req.body;
 
     if (!gameId)   return fail(res, 'gameId is required',   400);
@@ -222,72 +155,62 @@ export const startBet = async (req, res, next) => {
     let claims;
     try {
       claims = await verifyLaunchToken(launch, SYSTEM_BACKEND_URL);
-    } catch (err) {
+    } catch {
       return fail(res, 'Invalid or expired launch token', 401);
     }
     if (!claims?.phone) return fail(res, 'Launch token has no phone claim', 401);
 
-    const verifiedPhone = normalizePhone(claims.phone);
+    const verifiedPhone    = normalizePhone(claims.phone);
     const verifiedUsername = claims.username || req.body.username || 'Player';
 
-    // ── 1. Ensure player exists, then upsert game record ──────────────────────
-    // Auto-create the player if they don't exist yet — prevents FK violation
-    // on the games INSERT and handles first-time logins gracefully.
-    const existingPlayer = db.prepare('SELECT id FROM players WHERE id = ?').get(playerId);
-    if (!existingPlayer) {
+    // Ensure player exists
+    const { rows: existingPlayer } = await query(`SELECT id FROM players WHERE id = $1`, [playerId]);
+    if (!existingPlayer.length) {
       const tokenId = req.apiToken?.id || null;
-      db.prepare(`
-        INSERT OR IGNORE INTO players (id, name, phone, token_id, balance)
-        VALUES (?, ?, ?, ?, 500)
-      `).run(
-        playerId,
-        verifiedUsername,
-        verifiedPhone,
-        tokenId,
+      await query(
+        `INSERT INTO players (id, name, phone, token_id, balance) VALUES ($1, $2, $3, $4, 500) ON CONFLICT DO NOTHING`,
+        [playerId, verifiedUsername, verifiedPhone, tokenId]
       );
     } else if (req.apiToken?.id) {
-      // Ensure token_id is linked even on existing player
-      db.prepare('UPDATE players SET token_id = ? WHERE id = ? AND token_id IS NULL')
-        .run(req.apiToken.id, playerId);
+      await query(
+        `UPDATE players SET token_id = $1 WHERE id = $2 AND token_id IS NULL`,
+        [req.apiToken.id, playerId]
+      );
     }
 
-    let game = db.prepare('SELECT * FROM games WHERE id = ?').get(gameId);
+    let { rows: gameRows } = await query(`SELECT * FROM games WHERE id = $1`, [gameId]);
+    let game = gameRows[0];
     if (!game) {
-      db.prepare(`
-        INSERT INTO games (id, mode, player1_id, player2_id, bet_amount)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(gameId, mode, playerId, player2Id, betAmount);
-      game = db.prepare('SELECT * FROM games WHERE id = ?').get(gameId);
+      await query(
+        `INSERT INTO games (id, mode, player1_id, player2_id, bet_amount) VALUES ($1,$2,$3,$4,$5)`,
+        [gameId, mode, playerId, player2Id, betAmount]
+      );
+      const { rows } = await query(`SELECT * FROM games WHERE id = $1`, [gameId]);
+      game = rows[0];
     }
 
-    // If betAmount is 0, skip callback but still return success
     if (betAmount <= 0) {
       return ok(res, { game, betLog: null, skipped: true, reason: 'no bet amount' });
     }
 
-    // ── 2. Resolve token_id → backend_url + token string for this player ─────
-    const playerRow  = db.prepare('SELECT token_id, name FROM players WHERE id = ?').get(playerId);
-    const tokenId    = playerRow?.token_id || req.apiToken?.id || null;
+    // Resolve token → backend_url
+    const { rows: playerRows } = await query(`SELECT token_id, name FROM players WHERE id = $1`, [playerId]);
+    const tokenId    = playerRows[0]?.token_id || req.apiToken?.id || null;
 
-    const tokenRow   = tokenId
-      ? db.prepare('SELECT backend_url, token FROM api_tokens WHERE id = ? AND is_active = 1').get(tokenId)
-      : null;
-    const backendUrl = tokenRow?.backend_url || null;
-    const tokenStr   = tokenRow?.token       || null;
-    const normPhone  = verifiedPhone;
+    const { rows: tokenRows } = tokenId
+      ? await query(`SELECT backend_url, token FROM api_tokens WHERE id = $1 AND is_active = 1`, [tokenId])
+      : { rows: [] };
 
-    // ── 3. Build request body — include token so backend can authenticate ────
+    const backendUrl = tokenRows[0]?.backend_url || null;
+    const tokenStr   = tokenRows[0]?.token       || null;
+
     const requestBody = {
-      action:   'deduct',
-      token:    tokenStr,
-      phone:    normPhone,
-      username: playerRow?.name || verifiedUsername,
-      playerId,
-      amount:   betAmount,
-      gameId,
+      action:   'deduct', token: tokenStr,
+      phone:    verifiedPhone,
+      username: playerRows[0]?.name || verifiedUsername,
+      playerId, amount: betAmount, gameId,
     };
 
-    // ── 4. Call token backend ───────────────────────────────────────────────
     let responseBody = null;
     let status       = 'pending';
     let errorMsg     = null;
@@ -303,7 +226,7 @@ export const startBet = async (req, res, next) => {
         });
         const text = await resp.text();
         try { responseBody = JSON.parse(text); } catch { responseBody = { raw: text }; }
-        status = resp.ok ? 'success' : 'failed';
+        status   = resp.ok ? 'success' : 'failed';
         if (!resp.ok) errorMsg = `HTTP ${resp.status}`;
       } catch (fetchErr) {
         status   = 'error';
@@ -314,39 +237,31 @@ export const startBet = async (req, res, next) => {
       errorMsg = 'No backend_url configured for this token';
     }
 
-    // ── 5. Write to game_bet_log ─────────────────────────────────────────────
-    db.prepare(`
+    await query(`
       INSERT INTO game_bet_log
         (game_id, player_id, phone, bet_amount, backend_url, request_body, response_body, status, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      gameId,
-      playerId,
-      normPhone,
-      betAmount,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `, [
+      gameId, playerId, verifiedPhone, betAmount,
       backendUrl || null,
       JSON.stringify(requestBody),
       responseBody ? JSON.stringify(responseBody) : null,
-      status,
-      errorMsg || null,
-    );
+      status, errorMsg || null,
+    ]);
 
-    const betLog = db.prepare(
-      'SELECT * FROM game_bet_log WHERE game_id = ? AND player_id = ? ORDER BY id DESC LIMIT 1'
-    ).get(gameId, playerId);
+    const { rows: betLogRows } = await query(
+      `SELECT * FROM game_bet_log WHERE game_id = $1 AND player_id = $2 ORDER BY id DESC LIMIT 1`,
+      [gameId, playerId]
+    );
 
     return ok(res, {
       game,
       betLog: {
-        ...betLog,
-        requestBody,
-        responseBody,
+        ...betLogRows[0],
+        requestBody, responseBody,
         backendUrl: backendUrl || null,
-        status,
-        error: errorMsg || null,
+        status, error: errorMsg || null,
       },
     }, 201);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };

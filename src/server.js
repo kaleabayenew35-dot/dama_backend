@@ -8,36 +8,43 @@ import { logger } from './utils/logger.js';
 import { seedAiBots } from './utils/seedAiBots.js';
 import { startRetryWorker, stopRetryWorker } from './services/retryWorker.js';
 
-// Run DB migrations (idempotent)
-runMigrations();
+async function main() {
+  // Run DB migrations (idempotent)
+  await runMigrations();
 
-// Seed AI bots if fewer than 15 exist
-seedAiBots();
+  // Seed AI bots if fewer than 15 exist
+  await seedAiBots();
 
-// Start durable-callback retry worker
-startRetryWorker();
+  // Start durable-callback retry worker
+  startRetryWorker();
 
-// Create HTTP server from Express app
-const server = http.createServer(app);
+  // Create HTTP server from Express app
+  const server = http.createServer(app);
 
-// Attach WebSocket server to the same HTTP server
-attachWsServer(server);
+  // Attach WebSocket server to the same HTTP server
+  attachWsServer(server);
 
-// Start listening — bind to 0.0.0.0 so Render can detect the open port
-server.listen(PORT, '0.0.0.0', () => {
-  logger.info(`Dama backend running on http://0.0.0.0:${PORT}`);
-  logger.info(`WebSocket available at  ws://0.0.0.0:${PORT}`);
-});
-
-// Graceful shutdown
-const shutdown = (signal) => {
-  logger.info(`${signal} received — shutting down gracefully`);
-  stopRetryWorker();
-  server.close(() => {
-    logger.info('HTTP server closed');
-    process.exit(0);
+  // Start listening
+  server.listen(PORT, '0.0.0.0', () => {
+    logger.info(`Dama backend running on http://0.0.0.0:${PORT}`);
+    logger.info(`WebSocket available at  ws://0.0.0.0:${PORT}`);
   });
-};
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT',  () => shutdown('SIGINT'));
+  // Graceful shutdown
+  const shutdown = (signal) => {
+    logger.info(`${signal} received — shutting down gracefully`);
+    stopRetryWorker();
+    server.close(() => {
+      logger.info('HTTP server closed');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+}
+
+main().catch((err) => {
+  console.error('Fatal startup error:', err);
+  process.exit(1);
+});

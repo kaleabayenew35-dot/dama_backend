@@ -3,7 +3,7 @@ import { ok, fail } from '../utils/response.js';
 
 export const getConfig = async (req, res, next) => {
   try {
-    const config = aiService.getConfig();
+    const config = await aiService.getConfig();
     ok(res, config);
   } catch (err) { next(err); }
 };
@@ -12,27 +12,26 @@ export const updateConfig = async (req, res, next) => {
   try {
     const { difficulty, depth, thinkDelay, aiName, allowUndo } = req.body;
     const fields = {};
-    if (difficulty  !== undefined) fields.difficulty  = difficulty;
-    if (depth       !== undefined) fields.depth       = depth;
-    if (thinkDelay  !== undefined) fields.thinkDelay  = thinkDelay;
-    if (aiName      !== undefined) fields.aiName      = aiName;
-    if (allowUndo   !== undefined) fields.allowUndo   = allowUndo;
-    const config = aiService.updateConfig(fields);
+    if (difficulty !== undefined) fields.difficulty  = difficulty;
+    if (depth      !== undefined) fields.depth       = depth;
+    if (thinkDelay !== undefined) fields.thinkDelay  = thinkDelay;
+    if (aiName     !== undefined) fields.aiName      = aiName;
+    if (allowUndo  !== undefined) fields.allowUndo   = allowUndo;
+    const config = await aiService.updateConfig(fields);
     ok(res, config);
   } catch (err) { next(err); }
 };
 
 export const getBots = async (req, res, next) => {
   try {
-    const bots = aiService.getBots();
+    const bots = await aiService.getBots();
     ok(res, bots);
   } catch (err) { next(err); }
 };
 
-// Public version — no admin required, used by the game frontend
 export const getBotsPublic = async (req, res, next) => {
   try {
-    const bots = aiService.getBots();
+    const bots = await aiService.getBots();
     ok(res, bots);
   } catch (err) { next(err); }
 };
@@ -49,7 +48,7 @@ export const updateBot = async (req, res, next) => {
       }
     }
 
-    const bot = aiService.updateBot(id, {
+    const bot = await aiService.updateBot(id, {
       name,
       depth: depth !== undefined ? parseInt(depth, 10) : undefined,
     });
@@ -69,7 +68,6 @@ export const updateBot = async (req, res, next) => {
 const GEMINI_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
-/** Render the 8×8 board as a readable text grid for the prompt */
 function renderBoard(board, aiPlayer) {
   const SYMBOLS = { 0: '.', 1: 'b', 2: 'w', 3: 'B', 4: 'W' };
   const rows = board.map((row, r) =>
@@ -84,9 +82,8 @@ function renderBoard(board, aiPlayer) {
   ].join('\n');
 }
 
-/** Convert a move object to a human-readable string like "(2,1) → (3,0)" */
 function moveLabel(m) {
-  const fr = m.from || { r: m.r, c: m.c };
+  const fr   = m.from || { r: m.r, c: m.c };
   const cols = 'abcdefgh';
   return `(row${fr.r},${cols[fr.c]}) → (row${m.r},${cols[m.c]})${
     m.capturedSquare ? ' [capture]' : ''
@@ -98,7 +95,6 @@ export const getLLMMove = async (req, res, next) => {
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
-      // Key not configured — tell frontend to use local Minimax
       return res.json({ ok: true, data: { fallback: true, reason: 'no_api_key' } });
     }
 
@@ -108,11 +104,7 @@ export const getLLMMove = async (req, res, next) => {
       return fail(res, 'board and moves are required', 400);
     }
 
-    // Build numbered move list for the prompt
-    const moveList = moves
-      .map((m, i) => `${i + 1}. ${moveLabel(m)}`)
-      .join('\n');
-
+    const moveList  = moves.map((m, i) => `${i + 1}. ${moveLabel(m)}`).join('\n');
     const boardText = renderBoard(board, aiPlayer);
 
     const prompt = `You are an unbeatable grandmaster at Dama (Ethiopian Checkers). \
@@ -137,18 +129,14 @@ Do not include any other text, explanation, or punctuation.`;
 
     const body = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.1,   // near-deterministic for strategy
-        maxOutputTokens: 8, // we only need a single digit
-        topP: 0.95,
-      },
+      generationConfig: { temperature: 0.1, maxOutputTokens: 8, topP: 0.95 },
     };
 
     const apiRes = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8000), // 8-second hard timeout
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!apiRes.ok) {
@@ -157,9 +145,9 @@ Do not include any other text, explanation, or punctuation.`;
       return res.json({ ok: true, data: { fallback: true, reason: 'api_error' } });
     }
 
-    const json = await apiRes.json();
+    const json    = await apiRes.json();
     const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-    const idx = parseInt(rawText, 10) - 1; // convert 1-based to 0-based
+    const idx     = parseInt(rawText, 10) - 1;
 
     if (isNaN(idx) || idx < 0 || idx >= moves.length) {
       console.warn('[AI/LLM] Gemini returned invalid move index:', rawText, '— falling back');
@@ -170,7 +158,6 @@ Do not include any other text, explanation, or punctuation.`;
     return res.json({ ok: true, data: { move: moves[idx] } });
 
   } catch (err) {
-    // Network timeout, AbortError, parse error — all fall back gracefully
     console.error('[AI/LLM] Unexpected error, falling back to Minimax:', err.message);
     return res.json({ ok: true, data: { fallback: true, reason: 'exception' } });
   }
