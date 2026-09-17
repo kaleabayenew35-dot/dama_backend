@@ -1,6 +1,8 @@
 // backend/src/middleware/requireToken.js
 import jwt from 'jsonwebtoken';
 import db from '../db/database.js';
+import { verifyLaunchToken } from '../utils/launchToken.js';
+import { SYSTEM_BACKEND_URL } from '../config/env.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dama-jwt-secret-change-me';
 
@@ -113,7 +115,7 @@ export const requireToken = (req, res, next) => {
  * Special case: if NO active tokens exist in the DB (first-run / dev),
  * the request is allowed through so the app is usable before tokens are created.
  */
-export const requireTokenOrAdmin = (req, res, next) => {
+export const requireTokenOrAdmin = async (req, res, next) => {
   const raw = extractRawToken(req);
 
   // ── 1. Try admin JWT ───────────────────────────────────────────────────────
@@ -131,6 +133,26 @@ export const requireTokenOrAdmin = (req, res, next) => {
     if (row) {
       req.apiToken = { id: row.id, key_name: row.key_name, owner: row.owner };
       return next();
+    }
+
+    const launchToken = req.headers['x-launch-token'];
+    if (launchToken && String(raw).startsWith('GT-')) {
+      try {
+        const claims = await verifyLaunchToken(launchToken, SYSTEM_BACKEND_URL);
+        if (claims?.username) {
+          db.prepare(`
+            INSERT OR IGNORE INTO api_tokens (token, key_name, owner, backend_url, is_active)
+            VALUES (?, ?, ?, ?, 1)
+          `).run(raw, `system-game-${claims.gameId || 'launch'}`, 'System Backend', SYSTEM_BACKEND_URL);
+          const registered = lookupApiToken(raw);
+          if (registered) {
+            req.apiToken = { id: registered.id, key_name: registered.key_name, owner: registered.owner };
+            return next();
+          }
+        }
+      } catch (err) {
+        // Fall through to the standard unauthorized response.
+      }
     }
   }
 
