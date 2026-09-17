@@ -6,8 +6,18 @@ import { query } from '../db/database.js';
 import { normalizePhone } from '../utils/phone.js';
 import { verifyLaunchToken } from '../utils/launchToken.js';
 import { SYSTEM_BACKEND_URL } from '../config/env.js';
+import { getConfig as getAiConfig } from '../services/ai.js';
 
 const now = () => Math.floor(Date.now() / 1000);
+
+async function ensureAiEnabled(res) {
+  const config = await getAiConfig();
+  if (config && Number(config.ai_enabled) === 0) {
+    fail(res, 'AI play is currently disabled', 403);
+    return false;
+  }
+  return true;
+}
 
 export const listGames = async (req, res, next) => {
   try {
@@ -28,6 +38,7 @@ export const getGame = async (req, res, next) => {
 export const createGame = async (req, res, next) => {
   try {
     const { mode, player1Id, player2Id, betAmount } = req.body;
+    if (mode === 'ai' && !(await ensureAiEnabled(res))) return;
     const game = await gamesService.create({ mode, player1Id, player2Id, betAmount });
     ok(res, game, 201);
   } catch (err) { next(err); }
@@ -56,6 +67,8 @@ export const addMove = async (req, res, next) => {
 export const finishLocal = async (req, res, next) => {
   try {
     const { mode, player1Id, player2Id, winnerId, result, durationSec = 0, moveCount = 0 } = req.body;
+
+    if ((mode || 'ai') === 'ai' && !(await ensureAiEnabled(res))) return;
 
     if (!player1Id || !result) return fail(res, 'player1Id and result required', 400);
     if (!['win','loss','draw'].includes(result)) return fail(res, 'result must be win, loss, or draw', 400);
@@ -151,6 +164,7 @@ export const startBet = async (req, res, next) => {
     if (!gameId)   return fail(res, 'gameId is required',   400);
     if (!playerId) return fail(res, 'playerId is required', 400);
     if (!launch)   return fail(res, 'launch token is required', 400);
+    if (mode === 'ai' && !(await ensureAiEnabled(res))) return;
 
     let claims;
     try {
