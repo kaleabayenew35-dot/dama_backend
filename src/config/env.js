@@ -8,7 +8,11 @@ const required = (key) => {
 
 export const PORT = parseInt(process.env.PORT || '10000', 10);
 export const NODE_ENV = process.env.NODE_ENV || 'development';
-export const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/dama';
+const configuredDatabaseUrl = process.env.DATABASE_URL?.trim();
+if (NODE_ENV === 'production' && !configuredDatabaseUrl) {
+  throw new Error('DATABASE_URL is required in production. Add the PostgreSQL connection string in the Render service environment variables.');
+}
+export const DATABASE_URL = configuredDatabaseUrl || 'postgresql://postgres:password@localhost:5432/dama';
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'default-admin-token';
 export const FRONTEND_URL = process.env.FRONTEND_URL || 'https://dama-kyw6.onrender.com';
 export const SYSTEM_BACKEND_URL = process.env.SYSTEM_BACKEND_URL || 'https://system-backend-1u5m.onrender.com';

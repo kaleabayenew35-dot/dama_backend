@@ -6,7 +6,7 @@ REST + WebSocket API server for the Dama (Ethiopian checkers) game platform.
 
 - **Node.js 18+** with ESM (`"type": "module"`)
 - **Express 4** — HTTP framework
-- **better-sqlite3** — synchronous SQLite driver
+- **PostgreSQL** — persistent production database via `pg`
 - **ws** — WebSocket server
 - **express-validator** — request validation
 - **helmet / cors** — security & CORS
@@ -22,7 +22,7 @@ REST + WebSocket API server for the Dama (Ethiopian checkers) game platform.
 # 1. Install dependencies
 npm install
 
-# 2. Copy env file and adjust values
+# 2. Copy the env template and set your PostgreSQL credentials
 cp .env.example .env
 
 # 3. Start in development mode (auto-restarts on file changes)
@@ -32,8 +32,7 @@ npm run dev
 npm start
 ```
 
-The server starts on `http://localhost:3001` by default.  
-The SQLite database is created automatically at `./data/dama.db`.
+The server starts on `http://localhost:10000` by default. The PostgreSQL schema is created automatically during startup.
 
 ---
 
@@ -41,11 +40,19 @@ The SQLite database is created automatically at `./data/dama.db`.
 
 | Variable       | Default                                  | Description                          |
 |----------------|------------------------------------------|--------------------------------------|
-| `PORT`         | `3001`                                   | HTTP port                            |
+| `PORT`         | `10000`                                  | HTTP port                            |
 | `NODE_ENV`     | `development`                            | `development` or `production`        |
-| `DB_PATH`      | `./data/dama.db`                         | Path to SQLite database file         |
-| `ADMIN_TOKEN`  | `dama-admin-secret-change-me`            | Bearer token for admin endpoints     |
+| `DATABASE_URL` | local PostgreSQL URL                     | Required in production; Render PostgreSQL URL |
+| `JWT_SECRET`   | development fallback                     | Secret used to sign admin JWTs       |
+| `ADMIN_USERNAME` | `admin`                                 | Initial admin username               |
+| `ADMIN_PASSWORD` | `admin123`                              | Initial admin password               |
 | `CORS_ORIGINS` | `http://localhost:5173,...`              | Comma-separated allowed CORS origins |
+
+## Render deployment
+
+Create or attach a PostgreSQL database in Render, then add its **Internal Database URL** to the Dama backend service as `DATABASE_URL`. Also set `NODE_ENV=production`, `JWT_SECRET`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD` in the service environment variables. Use `npm install` as the build command and `npm run start` as the start command.
+
+The service intentionally refuses to start in production when `DATABASE_URL` is missing, instead of silently trying `localhost:5432`.
 
 ---
 
