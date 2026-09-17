@@ -10,13 +10,14 @@ export const getConfig = async (req, res, next) => {
 
 export const updateConfig = async (req, res, next) => {
   try {
-    const { difficulty, depth, thinkDelay, aiName, allowUndo } = req.body;
+    const { difficulty, depth, thinkDelay, aiName, allowUndo, aiEnabled } = req.body;
     const fields = {};
     if (difficulty !== undefined) fields.difficulty  = difficulty;
     if (depth      !== undefined) fields.depth       = depth;
     if (thinkDelay !== undefined) fields.thinkDelay  = thinkDelay;
     if (aiName     !== undefined) fields.aiName      = aiName;
     if (allowUndo  !== undefined) fields.allowUndo   = allowUndo;
+    if (aiEnabled  !== undefined) fields.aiEnabled   = aiEnabled;
     const config = await aiService.updateConfig(fields);
     ok(res, config);
   } catch (err) { next(err); }

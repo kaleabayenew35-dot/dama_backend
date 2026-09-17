@@ -17,6 +17,7 @@ router.put('/', requireAdmin,
     body('thinkDelay').optional().isInt({ min: 0 }),
     body('aiName').optional().isString().notEmpty(),
     body('allowUndo').optional().isBoolean(),
+    body('aiEnabled').optional().isBoolean(),
   ],
   validate,
   ctrl.updateConfig

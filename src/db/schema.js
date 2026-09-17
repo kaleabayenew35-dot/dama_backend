@@ -103,6 +103,7 @@ export async function applySchema() {
       think_delay INTEGER NOT NULL DEFAULT 600,
       ai_name     TEXT    NOT NULL DEFAULT 'Computer 🤖',
       allow_undo  INTEGER NOT NULL DEFAULT 1,
+      ai_enabled  INTEGER NOT NULL DEFAULT 1,
       updated_at  BIGINT  NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
     )
   `);

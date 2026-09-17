@@ -24,6 +24,11 @@ export const runMigrations = async () => {
     ALTER TABLE token_owner_transactions ADD COLUMN IF NOT EXISTS running_balance INTEGER
   `);
 
+  // Ensure ai_enabled column exists on ai_config (added after initial release)
+  await query(`
+    ALTER TABLE ai_config ADD COLUMN IF NOT EXISTS ai_enabled INTEGER NOT NULL DEFAULT 1
+  `);
+
   // Seed a default API token on fresh deployments
   const seededToken = await ensureDefaultApiToken();
   if (seededToken) {

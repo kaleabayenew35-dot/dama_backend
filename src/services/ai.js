@@ -24,6 +24,7 @@ export const updateConfig = async (fields) => {
     thinkDelay: 'think_delay',
     aiName:     'ai_name',
     allowUndo:  'allow_undo',
+    aiEnabled:  'ai_enabled',
   };
 
   const setClauses = [`updated_at = $1`];
