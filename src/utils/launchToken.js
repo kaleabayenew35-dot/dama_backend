@@ -42,6 +42,7 @@ export async function verifyLaunchToken(launchToken, systemBackendUrl) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ launch: launchToken.trim() }),
+      signal: AbortSignal.timeout(2000),
     });
 
     let rawBody = '';
