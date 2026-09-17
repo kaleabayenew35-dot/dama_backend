@@ -26,6 +26,7 @@ import { verifyLaunchToken } from '../utils/launchToken.js';
 import { ok, fail } from '../utils/response.js';
 import { normalizePhone } from '../utils/phone.js';
 import { logger } from '../utils/logger.js';
+import { SYSTEM_BACKEND_URL } from '../config/env.js';
 
 const router = Router();
 
@@ -60,7 +61,31 @@ router.post('/',
         'SELECT backend_url FROM api_tokens WHERE token = ? AND is_active = 1'
       ).get(token);
 
-      if (!tokenRow || !tokenRow.backend_url) {
+      if (!tokenRow) {
+        // System backend launch tokens are accepted and registered lazily so a
+        // newly-created game token works before a manual Dama token sync.
+        let claims;
+        try {
+          claims = await verifyLaunchToken(launch, SYSTEM_BACKEND_URL);
+        } catch (err) {
+          logger.warn(`[balance] system launch verification failed: ${err.message}`);
+          return ok(res, { balance: null, username: null });
+        }
+        if (!claims) return ok(res, { balance: null, username: null });
+
+        try {
+          db.prepare(`
+            INSERT OR IGNORE INTO api_tokens (token, key_name, owner, backend_url, is_active)
+            VALUES (?, ?, ?, ?, 1)
+          `).run(token, `system-game-${claims.gameId || 'launch'}`, 'System Backend', SYSTEM_BACKEND_URL);
+        } catch (registrationErr) {
+          logger.warn(`[balance] system token registration failed: ${registrationErr.message}`);
+        }
+
+        return ok(res, { balance: claims.balance, username: claims.username });
+      }
+
+      if (!tokenRow.backend_url) {
         logger.warn(`[balance] Token lookup failed: token=${token ? 'provided' : 'missing'}, row=${tokenRow ? 'found' : 'not found'}`);
         return ok(res, { balance: null, username: null });
       }
