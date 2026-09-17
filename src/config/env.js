@@ -6,17 +6,18 @@ const required = (key) => {
   return val;
 };
 
-export const PORT = parseInt(process.env.PORT || '5000', 10);
+export const PORT = parseInt(process.env.PORT || '10000', 10);
 export const NODE_ENV = process.env.NODE_ENV || 'development';
 export const DB_PATH = process.env.DB_PATH || './data/dama.db';
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'default-admin-token';
-export const FRONTEND_URL = process.env.FRONTEND_URL || 'https://dama-game-6d2b.onrender.com';
+export const FRONTEND_URL = process.env.FRONTEND_URL || 'https://dama-kyw6.onrender.com';
 
 // Always include these production origins plus anything set via env var
 const ALWAYS_ALLOWED = [
-  'https://dama-game-6d2b.onrender.com',
-  'https://dama-game-backend.onrender.com',
-  'https://dama-admin.onrender.com',
+  'https://dama-kyw6.onrender.com',
+  'https://dama-backend.onrender.com',
+  'https://system-admin-iou9.onrender.com',
+  'https://system-backend-1u5m.onrender.com',
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:4173',

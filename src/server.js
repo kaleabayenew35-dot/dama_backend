@@ -23,10 +23,10 @@ const server = http.createServer(app);
 // Attach WebSocket server to the same HTTP server
 attachWsServer(server);
 
-// Start listening
-server.listen(PORT, () => {
-  logger.info(`Dama backend running on http://localhost:${PORT}`);
-  logger.info(`WebSocket available at  ws://localhost:${PORT}`);
+// Start listening — bind to 0.0.0.0 so Render can detect the open port
+server.listen(PORT, '0.0.0.0', () => {
+  logger.info(`Dama backend running on http://0.0.0.0:${PORT}`);
+  logger.info(`WebSocket available at  ws://0.0.0.0:${PORT}`);
 });
 
 // Graceful shutdown
