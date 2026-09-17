@@ -2,7 +2,6 @@
   "name": "dama-backend",
   "version": "1.0.0",
   "type": "module",
-  "packageManager": "npm@10",
   "engines": {
     "node": "22.x"
   },
