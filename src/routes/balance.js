@@ -18,7 +18,7 @@
 
 import { Router } from 'express';
 import { body } from 'express-validator';
-import { query } from '../db/database.js';   // PostgreSQL query helper — NOT db.prepare
+import { query } from '../db/database.js';
 import { validate } from '../middleware/validate.js';
 import { fetchOwnerBalance } from '../services/ownerCallback.js';
 import { verifyLaunchToken } from '../utils/launchToken.js';
@@ -26,6 +26,7 @@ import { ok } from '../utils/response.js';
 import { normalizePhone } from '../utils/phone.js';
 import { logger } from '../utils/logger.js';
 import { SYSTEM_BACKEND_URL } from '../config/env.js';
+import { getByPhone } from '../services/players.js';
 
 const router = Router();
 
@@ -93,8 +94,31 @@ router.post('/',
       }
 
       if (!tokenRow.backend_url) {
-        logger.warn(`[balance] Token has no backend_url configured`);
-        return ok(res, { balance: null, username: null });
+        // This is a native dama_xxx token with no external owner backend.
+        // Verify the launch token via system_backend to get phone/username,
+        // then resolve balance from our own players table.
+        logger.info(`[balance] Token has no backend_url — verifying via system_backend`);
+
+        let claims;
+        try {
+          claims = await verifyLaunchToken(launch, SYSTEM_BACKEND_URL);
+        } catch (err) {
+          logger.warn(`[balance] system launch verification failed: ${err.message}`);
+          return ok(res, { balance: null, username: null });
+        }
+        if (!claims) {
+          logger.warn(`[balance] system launch verification returned null`);
+          return ok(res, { balance: null, username: null });
+        }
+
+        // Look up the player in our own DB by normalized phone
+        const normalizedPhone = normalizePhone(claims.phone);
+        const localPlayer = normalizedPhone ? await getByPhone(normalizedPhone) : null;
+
+        return ok(res, {
+          balance:  localPlayer?.balance ?? (claims.balance !== undefined ? Number(claims.balance) : 0),
+          username: localPlayer?.name ?? claims.username,
+        });
       }
 
       logger.info(`[balance] Token found: backend=${tokenRow.backend_url}`);
@@ -123,13 +147,14 @@ router.post('/',
         data = await fetchOwnerBalance(token, normalizePhone(phone), username);
       } catch (err) {
         logger.warn(`[balance] Balance lookup failed: ${err.message}`);
-        return ok(res, { balance: null, username: null });
+        // Owner backend unreachable — still return username so auth gate resolves
+        return ok(res, { balance: 0, username });
       }
 
       // ── 4. Return to frontend (phone intentionally excluded) ──────────────
       ok(res, {
-        balance:  data?.balance  ?? 0,   // 0 is a valid balance; null triggers frontend retry
-        username: data?.username ?? claims.username ?? null,
+        balance:  data?.balance  ?? 0,
+        username: data?.username ?? username,
       });
 
     } catch (err) {

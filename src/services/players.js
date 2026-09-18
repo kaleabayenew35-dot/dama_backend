@@ -38,9 +38,13 @@ export const getAll = async (filters = {}) => {
 };
 
 /**
- * Get a single player by ID.
+ * Get a single player by phone number.
  */
-export const getById = async (id) => {
+export const getByPhone = async (phone) => {
+  if (!phone) return null;
+  const { rows } = await query(`SELECT * FROM players WHERE phone = $1 LIMIT 1`, [phone]);
+  return rows[0] || null;
+};
   const { rows } = await query(`SELECT * FROM players WHERE id = $1`, [id]);
   return rows[0] || null;
 };
