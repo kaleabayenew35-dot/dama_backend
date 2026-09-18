@@ -84,7 +84,12 @@ router.post('/',
           logger.warn(`[balance] system token registration failed: ${registrationErr.message}`);
         }
 
-        return ok(res, { balance: claims.balance, username: claims.username });
+        return ok(res, {
+          balance:  claims.balance !== undefined && claims.balance !== null
+            ? Number(claims.balance)
+            : 0,
+          username: claims.username,
+        });
       }
 
       if (!tokenRow.backend_url) {
@@ -123,8 +128,8 @@ router.post('/',
 
       // ── 4. Return to frontend (phone intentionally excluded) ──────────────
       ok(res, {
-        balance:  data ? data.balance  : null,
-        username: data ? data.username : null,
+        balance:  data?.balance  ?? 0,   // 0 is a valid balance; null triggers frontend retry
+        username: data?.username ?? claims.username ?? null,
       });
 
     } catch (err) {
