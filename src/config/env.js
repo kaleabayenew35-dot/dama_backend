@@ -23,9 +23,15 @@ const ALWAYS_ALLOWED = [
   'https://dama-backend.onrender.com',
   'https://system-admin-iou9.onrender.com',
   'https://system-backend-1u5m.onrender.com',
+  'https://system-backend-jbnd.onrender.com',
+  // legacy deploy URLs — keep so existing tokens still work
+  'https://dama-game-6d2b.onrender.com',
+  'https://dama-game-backend.onrender.com',
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:4173',
+  'http://localhost:3173',
+  'http://localhost:5174',
 ];
 
 const envOrigins = (process.env.CORS_ORIGINS || '')
