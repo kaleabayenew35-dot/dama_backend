@@ -9,8 +9,7 @@
 // short-lived signed JWT (the "launch token") that contains { phone, username,
 // balance, gameId }.  The frontend forwards that opaque string here along with
 // its Dama API token.  This backend asks system-backend to verify the token and
-// extracts the phone/username — the browser never sees either value in plain
-// text.
+// extracts the phone/username — the browser never sees either value in plain text.
 //
 // Flow:
 //   1. Verify `launch` JWT with verifyLaunchToken() → { phone, username, … }
@@ -19,11 +18,11 @@
 
 import { Router } from 'express';
 import { body } from 'express-validator';
-import db from '../db/database.js';
+import { query } from '../db/database.js';   // PostgreSQL query helper — NOT db.prepare
 import { validate } from '../middleware/validate.js';
 import { fetchOwnerBalance } from '../services/ownerCallback.js';
 import { verifyLaunchToken } from '../utils/launchToken.js';
-import { ok, fail } from '../utils/response.js';
+import { ok } from '../utils/response.js';
 import { normalizePhone } from '../utils/phone.js';
 import { logger } from '../utils/logger.js';
 import { SYSTEM_BACKEND_URL } from '../config/env.js';
@@ -43,8 +42,6 @@ const router = Router();
  *  - token has no backend_url configured
  *  - owner backend unreachable
  * Frontend falls back to the URL ?balance= param in those cases.
- *
- * 401 when launch token is missing, invalid, or expired.
  */
 router.post('/',
   [
@@ -56,14 +53,16 @@ router.post('/',
     try {
       const { token, launch } = req.body;
 
-      // ── 1. Verify token exists and has a backend_url ───────────────────────
-      const tokenRow = db.prepare(
-        'SELECT backend_url FROM api_tokens WHERE token = ? AND is_active = 1'
-      ).get(token);
+      // ── 1. Look up token in PostgreSQL ────────────────────────────────────
+      const { rows } = await query(
+        'SELECT backend_url FROM api_tokens WHERE token = $1 AND is_active = 1',
+        [token]
+      );
+      const tokenRow = rows[0] || null;
 
       if (!tokenRow) {
-        // System backend launch tokens are accepted and registered lazily so a
-        // newly-created game token works before a manual Dama token sync.
+        // Token not found — try verifying via system-backend directly
+        // (handles newly-created game tokens before a manual Dama token sync)
         let claims;
         try {
           claims = await verifyLaunchToken(launch, SYSTEM_BACKEND_URL);
@@ -73,11 +72,14 @@ router.post('/',
         }
         if (!claims) return ok(res, { balance: null, username: null });
 
+        // Register the token lazily so future requests don't repeat this path
         try {
-          db.prepare(`
-            INSERT OR IGNORE INTO api_tokens (token, key_name, owner, backend_url, is_active)
-            VALUES (?, ?, ?, ?, 1)
-          `).run(token, `system-game-${claims.gameId || 'launch'}`, 'System Backend', SYSTEM_BACKEND_URL);
+          await query(
+            `INSERT INTO api_tokens (token, key_name, owner, backend_url, is_active)
+             VALUES ($1, $2, $3, $4, 1)
+             ON CONFLICT (token) DO NOTHING`,
+            [token, `system-game-${claims.gameId || 'launch'}`, 'System Backend', SYSTEM_BACKEND_URL]
+          );
         } catch (registrationErr) {
           logger.warn(`[balance] system token registration failed: ${registrationErr.message}`);
         }
@@ -86,13 +88,13 @@ router.post('/',
       }
 
       if (!tokenRow.backend_url) {
-        logger.warn(`[balance] Token lookup failed: token=${token ? 'provided' : 'missing'}, row=${tokenRow ? 'found' : 'not found'}`);
+        logger.warn(`[balance] Token has no backend_url configured`);
         return ok(res, { balance: null, username: null });
       }
 
       logger.info(`[balance] Token found: backend=${tokenRow.backend_url}`);
 
-      // ── 2. Verify launch token with system-backend ────────────────────────
+      // ── 2. Verify launch token with the token's backend ───────────────────
       let claims;
       try {
         logger.info(`[balance] Verifying launch token with ${tokenRow.backend_url}...`);
@@ -103,16 +105,13 @@ router.post('/',
       }
 
       if (!claims) {
-        // null → missing/empty string or missing required claims
-        logger.warn(`[balance] Launch token returned null`);
+        logger.warn(`[balance] Launch token returned null claims`);
         return ok(res, { balance: null, username: null });
       }
 
-      logger.info(`[balance] Launch token verified: phone=${claims.phone}, username=${claims.username}`);
+      logger.info(`[balance] Launch token verified: username=${claims.username}`);
 
-      // ── 3. Fetch balance from owner backend using server-extracted values ──
-      // phone and username come exclusively from the verified JWT — the client
-      // has no way to supply or tamper with them.
+      // ── 3. Fetch live balance from owner backend ──────────────────────────
       const { phone, username } = claims;
       let data = null;
       try {
@@ -122,8 +121,7 @@ router.post('/',
         return ok(res, { balance: null, username: null });
       }
 
-      // ── 4. Return balance to frontend ──────────────────────────────────────
-      // NOTE: phone is intentionally NOT included in this response.
+      // ── 4. Return to frontend (phone intentionally excluded) ──────────────
       ok(res, {
         balance:  data ? data.balance  : null,
         username: data ? data.username : null,
