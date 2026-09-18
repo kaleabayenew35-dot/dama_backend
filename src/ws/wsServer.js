@@ -416,7 +416,7 @@ async function handleClose(ws) {
   const oppWs = connections.get(oppId);
   if (oppWs) send(oppWs, { type: OPPONENT_LEFT, playerId: myId });
 
-  logger.info(`WS: ${myId} disconnected mid-game — starting 15s reconnect timer`);
+  logger.info(`WS: ${myId} disconnected mid-game — starting 5s reconnect timer`);
 
   const timer = setTimeout(async () => {
     disconnectTimers.delete(myId);
@@ -460,7 +460,10 @@ async function handleClose(ws) {
     } catch (err) {
       logger.error('WS: auto-resign error:', err.message);
     }
-  }, 15_000);
+  }, 5_000);
 
   disconnectTimers.set(myId, timer);
 }
+
+// exported for use in tests / admin
+export { connections, disconnectTimers };
