@@ -49,7 +49,7 @@ export async function callDamaEndpoint(backendUrl, body) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(15000), // 15 s — accommodates cold starts on partner backends
     });
     if (!res.ok) {
       logger.warn(`ownerCallback ${url} responded ${res.status}`);
@@ -76,7 +76,7 @@ export async function dispatchCallback(tokenId, gameId, backendUrl, payload) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(enrichedPayload),
-      signal:  AbortSignal.timeout(5000),
+      signal:  AbortSignal.timeout(15000), // 15 s — accommodates cold starts on partner backends
     });
 
     if (!res.ok) {
