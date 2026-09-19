@@ -24,7 +24,7 @@ services:
       - key: CORS_ORIGINS
         value: https://dama-kyw6.onrender.com,https://system-admin-iou9.onrender.com,https://system-backend-1u5m.onrender.com,http://localhost:3000,http://localhost:5173
       - key: ADMIN_TOKEN
-        sync: false
+        value: dama-admin-secret-change-me
       - key: DAMA_GAME_TOKEN
         value: GT-7293FCC488E62FC18C46BB891C886CE5
 
