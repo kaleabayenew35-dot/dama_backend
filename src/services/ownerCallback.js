@@ -194,13 +194,17 @@ export async function notifyBetPlaced(tokenId, { player1Id, player2Id, betAmount
 
   await Promise.allSettled([
     dispatchCallback(tokenId, gameId, backendUrl, {
-      action:   'deduct', token: tokenStr, playerId: player1Id,
+      action: 'deduct', token: tokenStr,
+      telegramId: player1Id,   // dama player IDs = Telegram IDs
+      playerId:   player1Id,
       phone:    normalizePhone(await getPlayerPhone(player1Id)),
       username: await getPlayerName(player1Id),
       amount: betAmount, gameId,
     }),
     dispatchCallback(tokenId, gameId, backendUrl, {
-      action:   'deduct', token: tokenStr, playerId: player2Id,
+      action: 'deduct', token: tokenStr,
+      telegramId: player2Id,
+      playerId:   player2Id,
       phone:    normalizePhone(await getPlayerPhone(player2Id)),
       username: await getPlayerName(player2Id),
       amount: betAmount, gameId,
@@ -214,13 +218,17 @@ export async function notifyWinPayout(tokenId, { winnerId, loserId, winnerPayout
 
   await Promise.allSettled([
     dispatchCallback(tokenId, gameId, backendUrl, {
-      action:   'credit', token: tokenStr, playerId: winnerId,
+      action: 'credit', token: tokenStr,
+      telegramId: winnerId,
+      playerId:   winnerId,
       phone:    normalizePhone(await getPlayerPhone(winnerId)),
       username: await getPlayerName(winnerId),
       amount: winnerPayout, fee, gameId,
     }),
     dispatchCallback(tokenId, gameId, backendUrl, {
-      action:   'loss', token: tokenStr, playerId: loserId,
+      action: 'loss', token: tokenStr,
+      telegramId: loserId,
+      playerId:   loserId,
       phone:    normalizePhone(await getPlayerPhone(loserId)),
       username: await getPlayerName(loserId),
       amount: 0, fee, gameId,
@@ -234,13 +242,17 @@ export async function notifyDrawRefund(tokenId, { player1Id, player2Id, refund, 
 
   await Promise.allSettled([
     dispatchCallback(tokenId, gameId, backendUrl, {
-      action:   'refund', token: tokenStr, playerId: player1Id,
+      action: 'refund', token: tokenStr,
+      telegramId: player1Id,
+      playerId:   player1Id,
       phone:    normalizePhone(await getPlayerPhone(player1Id)),
       username: await getPlayerName(player1Id),
       amount: refund, fee, gameId,
     }),
     dispatchCallback(tokenId, gameId, backendUrl, {
-      action:   'refund', token: tokenStr, playerId: player2Id,
+      action: 'refund', token: tokenStr,
+      telegramId: player2Id,
+      playerId:   player2Id,
       phone:    normalizePhone(await getPlayerPhone(player2Id)),
       username: await getPlayerName(player2Id),
       amount: refund, fee, gameId,
