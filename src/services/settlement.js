@@ -18,7 +18,7 @@ export async function ensureOwnerBalanceTable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function adjustOwnerBalance(tokenId, gameId, delta, type, note) {
-  if (!tokenId) return;
+  if (!tokenId) return; // owner balance tracking is token-based — skip if no token
 
   // Upsert balance row
   await query(`
@@ -43,6 +43,7 @@ async function adjustOwnerBalance(tokenId, gameId, delta, type, note) {
 
 async function getTokenIdForPlayer(playerId) {
   const { rows } = await query(`SELECT token_id FROM players WHERE id = $1`, [playerId]);
+  // Returns null when no token linked — getBackendInfo handles the system_backend fallback
   return rows[0]?.token_id || null;
 }
 

@@ -113,14 +113,32 @@ export async function getTokenRow(tokenStr) {
 }
 
 export async function getBackendInfo(tokenId) {
-  if (!tokenId) return { backendUrl: null, tokenStr: null };
+  if (!tokenId) {
+    // No token at all — use system_backend as fallback with the Dama game token
+    return {
+      backendUrl: process.env.SYSTEM_BACKEND_URL || null,
+      tokenStr:   process.env.DAMA_GAME_TOKEN    || null,
+    };
+  }
   const { rows } = await query(
     `SELECT backend_url, token FROM api_tokens WHERE id = $1`, [tokenId]
   );
-  return {
-    backendUrl: rows[0]?.backend_url || null,
-    tokenStr:   rows[0]?.token       || null,
-  };
+  const row = rows[0];
+  if (!row) {
+    return {
+      backendUrl: process.env.SYSTEM_BACKEND_URL || null,
+      tokenStr:   process.env.DAMA_GAME_TOKEN    || null,
+    };
+  }
+
+  // If this token has no backend_url (native dama_xxx token without an owner backend),
+  // fall back to system_backend with the Dama game token for balance callbacks.
+  const backendUrl = row.backend_url || process.env.SYSTEM_BACKEND_URL || null;
+  const tokenStr   = row.backend_url
+    ? (row.token || null)
+    : (process.env.DAMA_GAME_TOKEN || row.token || null);
+
+  return { backendUrl, tokenStr };
 }
 
 export async function getTokenIdForPlayer(playerId) {
