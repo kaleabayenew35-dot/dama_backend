@@ -53,7 +53,9 @@ async function retryRow(row) {
   }
 
   if (!payload.callbackId) payload.callbackId = row.id;
-  if (tokenStr && !payload.token) payload.token = tokenStr;
+  // Always overwrite the token with the current active token for the backend,
+  // since old payloads may carry a dama_xxx API token which doesn't authenticate /dama.
+  if (tokenStr) payload.token = tokenStr;
 
   const url = backendUrl.replace(/\/$/, '') + '/dama';
 
