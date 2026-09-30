@@ -15,14 +15,14 @@ if (NODE_ENV === 'production' && !configuredDatabaseUrl) {
 export const DATABASE_URL = configuredDatabaseUrl || 'postgresql://postgres:password@localhost:5432/dama';
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'default-admin-token';
 export const FRONTEND_URL = process.env.FRONTEND_URL || 'https://dama-kyw6.onrender.com';
-export const SYSTEM_BACKEND_URL = process.env.SYSTEM_BACKEND_URL || 'https://system-backend-1u5m.onrender.com';
+export const SYSTEM_BACKEND_URL = process.env.SYSTEM_BACKEND_URL || 'https://system-backend-ruby.vercel.app';
 
 // Always include these production origins plus anything set via env var
 const ALWAYS_ALLOWED = [
   'https://dama-kyw6.onrender.com',
   'https://dama-backend.onrender.com',
   'https://system-admin-iou9.onrender.com',
-  'https://system-backend-1u5m.onrender.com',
+  'https://system-backend-ruby.vercel.app',
   'https://system-backend-jbnd.onrender.com',
   // legacy deploy URLs — keep so existing tokens still work
   'https://dama-game-6d2b.onrender.com',
