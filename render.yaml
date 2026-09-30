@@ -18,11 +18,11 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
       - key: SYSTEM_BACKEND_URL
-        value: https://system-backend-1u5m.onrender.com
+        value: https://system-backend-ruby.vercel.app/
       - key: FRONTEND_URL
         value: https://dama-kyw6.onrender.com
       - key: CORS_ORIGINS
-        value: https://dama-kyw6.onrender.com,https://system-admin-iou9.onrender.com,https://system-backend-1u5m.onrender.com,http://localhost:3000,http://localhost:5173
+        value: https://dama-kyw6.onrender.com,https://system-admin-iou9.onrender.com,https://system-backend-ruby.vercel.app/,http://localhost:3000,http://localhost:5173
       - key: ADMIN_TOKEN
         value: dama-admin-secret-change-me
       - key: DAMA_GAME_TOKEN
